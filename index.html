@@ -497,7 +497,7 @@
 }</div>
                 <div class="muted-card" style="margin-top:14px;">
                   <strong>연결 주소</strong>
-                  <p class="mini" style="margin:8px 0 0; word-break:break-all;">https://script.google.com/macros/s/AKfycbwp4gEQ3xcSWuRBnFDQ5BHLu5VNSrj9tbOKeuKr2bi6VF2Fi1CN0nTd-ZVFkhMoWfLw/exec</p>
+                  <p class="mini" style="margin:8px 0 0; word-break:break-all;">기본: https://script.google.com/macros/s/AKfycbyuAFNVdeu3ARrl-kmUIXfDPnxAUfuEwqurHVoKxRitrOcJ7rqYx4DjllfvYyFOzxEP/exec<br>예비: https://script.google.com/macros/s/AKfycbwp4gEQ3xcSWuRBnFDQ5BHLu5VNSrj9tbOKeuKr2bi6VF2Fi1CN0nTd-ZVFkhMoWfLw/exec</p>
                 </div>
               </div>
             </details>
@@ -658,7 +658,10 @@
   </div>
 
   <script>
-    const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyuAFNVdeu3ARrl-kmUIXfDPnxAUfuEwqurHVoKxRitrOcJ7rqYx4DjllfvYyFOzxEP/exec';
+    const SCRIPT_URL_PRIMARY = 'https://script.google.com/macros/s/AKfycbyuAFNVdeu3ARrl-kmUIXfDPnxAUfuEwqurHVoKxRitrOcJ7rqYx4DjllfvYyFOzxEP/exec';
+    const SCRIPT_URL_FALLBACK = 'https://script.google.com/macros/s/AKfycbwp4gEQ3xcSWuRBnFDQ5BHLu5VNSrj9tbOKeuKr2bi6VF2Fi1CN0nTd-ZVFkhMoWfLw/exec';
+    const SCRIPT_URL = SCRIPT_URL_PRIMARY;
+    const SCRIPT_URLS = Array.from(new Set([SCRIPT_URL_PRIMARY, SCRIPT_URL_FALLBACK].filter(Boolean)));
     const STORAGE_KEY = 'sportsday_admin_queue_v1';
     const HISTORY_KEY = 'sportsday_admin_history_v1';
     const CONFIG_KEY = 'sportsday_admin_config_v1';
@@ -775,6 +778,31 @@
       loaded: false,
       loading: false
     };
+
+    async function fetchScriptResponse(query = '', options = {}) {
+      let lastError = null;
+      for (const base of SCRIPT_URLS) {
+        try {
+          const res = await fetch(`${base}${query}`, options);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return res;
+        } catch (err) {
+          lastError = err;
+          console.warn('script fetch failed:', base, query, err);
+        }
+      }
+      throw lastError || new Error('Apps Script 연동에 실패했습니다.');
+    }
+
+    async function fetchScriptJson(query = '', options = {}) {
+      const res = await fetchScriptResponse(query, options);
+      return res.json();
+    }
+
+    async function fetchScriptText(query = '', options = {}) {
+      const res = await fetchScriptResponse(query, options);
+      return { ok: res.ok, status: res.status, text: await res.text() };
+    }
 
     function normalizeGradeText(value) {
       const t = String(value || '').replace(/\s+/g, '').trim();
@@ -1069,10 +1097,7 @@
       if (!force && (scheduleState.loaded || scheduleState.loading)) return scheduleState.rows;
       scheduleState.loading = true;
       try {
-        const url = `${SCRIPT_URL}?tab=${encodeURIComponent('대진표')}`;
-        const res = await fetch(url, { cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const data = await fetchScriptJson(`?tab=${encodeURIComponent('대진표')}`, { cache: 'no-store' });
         const rows = normalizeScheduleResponse(data);
         scheduleState.rows = buildScheduleMatchRows(rows);
         scheduleState.loaded = true;
@@ -1414,14 +1439,12 @@ function applyNextSuggestedMatch() {
     }
 
     async function postPayload(payload) {
-      const res = await fetch(SCRIPT_URL, {
+      return fetchScriptText('', {
         method:'POST',
         mode:'cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify(payload)
       });
-      const text = await res.text();
-      return { ok: res.ok, status: res.status, text };
     }
 
     function setStatus(target, message, type='warn') {
